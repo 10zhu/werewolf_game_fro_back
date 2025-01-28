@@ -17,3 +17,5 @@ class GamePlayer(models.Model):
     status = models.CharField(max_length=20)
     is_policeman = models.BooleanField(default=False)
     running_for_policeman = models.BooleanField(default=False)
+
+    # TODO: mongodb store game states [eg. players' history action, game_ready,

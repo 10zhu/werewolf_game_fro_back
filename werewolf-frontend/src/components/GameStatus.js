@@ -6,6 +6,6 @@ export const GameStatus = ({ gameSession, gamePhase, currentPlayer }) => (
     <h2 className="text-xl font-semibold mb-2">Game Status</h2>
     <p>Session ID: {gameSession}</p>
     <p>Phase: {gamePhase}</p>
-    <p>Player: {currentPlayer || 'Not selected'}</p>
+    <p>Your Position: {currentPlayer ? `Position ${parseInt(currentPlayer.replace('p', '')) + 1}` : 'Not selected'}</p>
   </div>
 );

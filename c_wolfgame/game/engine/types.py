@@ -15,6 +15,7 @@ class PlayerStatus(Enum):
     DEAD = 2
 
 class Role(Enum):
+    UNASSIGNED = "UNASSIGNED"
     WEREWOLF = "WEREWOLF"
     VILLAGER = "VILLAGER"
     SEER = "SEER"

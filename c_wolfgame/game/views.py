@@ -18,17 +18,6 @@ from .start_game_dto_response import StartGameResponseDto
 logger = logging.getLogger(__name__)
 
 class GameViewSet(viewsets.ViewSet):
-    # @action(detail=False, methods=['POST'])
-    # def create_game(self, request):
-    #     session = GameSession.objects.create(
-    #         session_id=request.data.get('session_id'),
-    #         current_phase='SETUP'
-    #     )
-    #     return Response({
-    #         'session_id': session.session_id,
-    #         'status': 'created'
-    #     })
-
     def create(self, request):  # Add this method to handle POST
         print("Incoming data:", request.data)
         session_id = request.data.get('session_id')
@@ -49,31 +38,59 @@ class GameViewSet(viewsets.ViewSet):
             },
             status=status.HTTP_201_CREATED
         )
-
+    # TODO: fetch all available rooms, 
     @action(detail=True, methods=['POST'])
     def start_game(self, request, pk=None):
         session = GameSession.objects.get(pk=pk)
         logger.info(f"session is {session}")
+
+        # Create test players if none exist (for testing purposes)
+        if not GamePlayer.objects.filter(game_session=session).exists():
+            # Create 12 players as defined in your WerewolfGame class
+            for i in range(12):
+                GamePlayer.objects.create(
+                    game_session=session,
+                    player_id=f"p{i}",  # Match the IDs from your game engine
+                    name=f"Player {i}",
+                    status='ALIVE',
+                )
+
         # Update the game phase
         game = WerewolfGame()
         game.setup_game()
 
-        session.current_phase = game._current_phase  # Example phase change
+        # Update the database with the roles assigned by the game engine
+        players_data = []
+        for player_id, game_player in game._players.items():
+            db_player = GamePlayer.objects.get(
+                game_session = session,
+                player_id = player_id
+            )
+            db_player.role = game_player.get_role().value  # Get the role value from enum
+            db_player.status = 'ALIVE'
+            db_player.save()
+            players_data.append({
+                'player_id': db_player.player_id,
+                'name': db_player.name,
+                'role': db_player.role,
+                'status': db_player.status
+            })
+        session.current_phase = game._current_phase.name  # Example phase change
         session.save()
+
+        # Create and return response using StartGameResponseDto
+        response = StartGameResponseDto(
+            type="game_state",
+            phase=session.current_phase,
+            players=players_data
+        )
 
         # Notify clients via WebSocket
         channel_layer = get_channel_layer()
         logger.info(f"channel layer is {channel_layer}")
-        #
-        # async_to_sync(channel_layer.group_send)(
-        #     f"game_{session.session_id}",
-        #     {
-        #         "type": "phase_update",
-        #         "phase": session.current_phase,
-        #     }
-        # )
+
         return Response(
-            StartGameResponseDto(type="phase_update", phase="Night").to_json()
+            response.to_json()
         )
 
     @action(detail=True, methods=['POST'])

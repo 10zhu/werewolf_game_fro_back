@@ -1,10 +1,10 @@
-//// src/App.js
 // src/App.js
 import React, { useState, useEffect } from 'react';
 import { GameLobby } from './components/GameLobby';
 import { GameBoard } from './components/GameBoard';
 import { PlayerActions } from './components/PlayerActions';
 import { GameStatus } from './components/GameStatus';
+import { RoomList } from './components/RoomList';
 
 const App = () => {
   const [gameSession, setGameSession] = useState(null);
@@ -12,6 +12,8 @@ const App = () => {
   const [currentPlayer, setCurrentPlayer] = useState(null);
   const [gamePhase, setGamePhase] = useState('SETUP');
   const [socket, setSocket] = useState(null);
+  const [showRoomList, setShowRoomList] = useState(true);
+
 
   useEffect(() => {
     if (gameSession) {
@@ -74,34 +76,52 @@ const App = () => {
       });
       const data = await response.json();
       setGameSession(data.session_id);
+      setShowRoomList(false);
     } catch (error) {
       console.error('Error creating game:', error);
     }
   };
 
-//  const startGame = async () => {
-//  try {
-//    if (!currentPlayer && players.length > 0) {
-//      setCurrentPlayer(players[0].player_id);
-//    }
-//
-//    const resp = await fetch(`http://localhost:8000/api/games/${gameSession}/start_game/`, {
-//      method: 'POST',
-//    });
-//    const data = await resp.json();
-//    console.log("Start game response received:", data); // Debug log to see the response
-//    handleGameUpdate(data);
-//  } catch (error) {
-//    console.error('Error starting game:', error);
-//  }
-//};
-    const startGame = () => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: 'start_game'
-        }));
-      }
-    };
+const handleSelectRoom = (sessionId) => {
+    setGameSession(sessionId);
+    setShowRoomList(false);
+  };
+
+  const leaveRoom = () => {
+    if (socket) {
+      socket.close();
+    }
+    setGameSession(null);
+    setPlayers([]);
+    setCurrentPlayer(null);
+    setGamePhase('SETUP');
+    setShowRoomList(true);
+  };
+
+
+  const startGame = async () => {
+  try {
+    if (!currentPlayer && players.length > 0) {
+      setCurrentPlayer(players[0].player_id);
+    }
+
+    const resp = await fetch(`http://localhost:8000/api/games/${gameSession}/start_game/`, {
+      method: 'POST',
+    });
+    const data = await resp.json();
+    console.log("Start game response received:", data); // Debug log to see the response
+    handleGameUpdate(data);
+  } catch (error) {
+    console.error('Error starting game:', error);
+  }
+};
+//    const startGame = () => {
+//      if (socket && socket.readyState === WebSocket.OPEN) {
+//        socket.send(JSON.stringify({
+//          type: 'start_game'
+//        }));
+//      }
+//    };
 
   const submitAction = async (action, targetId) => {
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -127,15 +147,30 @@ const App = () => {
   return (
     <div className="min-h-screen bg-gray-100 p-8">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Werewolf Game</h1>
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold">Werewolf Game</h1>
+          {gameSession && (
+            <button
+              onClick={leaveRoom}
+              className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+            >
+              Leave Room
+            </button>
+          )}
+        </div>
 
-        {!gameSession ? (
-          <button
-            onClick={createGame}
-            className="bg-blue-500 text-white px-4 py-2 rounded"
-          >
-            Create New Game
-          </button>
+        {showRoomList ? (
+          <div className="space-y-4">
+            <RoomList onSelectRoom={handleSelectRoom} />
+            <div className="text-center">
+              <button
+                onClick={createGame}
+                className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors"
+              >
+                Create New Game
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <GameStatus

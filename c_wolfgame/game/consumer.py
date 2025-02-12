@@ -8,6 +8,7 @@ from .engine.controller import GameController
 from .engine.types import GameAction
 from .models import GameSession, GamePlayer
 from .engine.game import WerewolfGame
+from .mongodb_model import GameStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,8 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
         self.room_group_name = f'game_{self.game_id}'
         self.game = None
         self.controller = None
+        self.game_store = GameStateStore()
+        game_state = self.game_store.get_or_create_game_state(self.game_id)
         logger.info(f"Connecting to game {self.game_id}, room group {self.room_group_name}")
 
         await self.channel_layer.group_add(
@@ -46,6 +49,23 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content):
             logger.info(f"websocket receiving json content {content}")
             message_type = content.get('type')
+            try:
+                # Get the PostgreSQL session
+                session = await database_sync_to_async(GameSession.objects.get)(session_id=self.game_id)
+
+                # Example of logging an action
+                await database_sync_to_async(self.game_store.add_action)(
+                    session_id=self.game_id,
+                    player_id=content.get('player_id'),
+                    action_type=content.get('action'),
+                    target_id=content.get('target_id'),
+                    round_number=session.round_count,  # From PostgreSQL GameSession
+                    phase=session.current_phase  # From PostgreSQL GameSession
+                )
+            except GameSession.DoesNotExist:
+                # Handle error...
+                pass
+
 
             if message_type == 'player_action':
                 # Handle player actions and update game state
@@ -549,4 +569,3 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 'message': 'Game session not found'
             }
 
-    def

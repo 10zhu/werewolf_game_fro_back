@@ -25,75 +25,105 @@ class GameViewSet(viewsets.ViewSet):
         try:
             session_id = uuid.UUID(session_id)
         except (ValueError, TypeError):
-            # raise ValidationError({'session_id': 'Invalid UUID format.'})
             session_id = uuid.uuid4()
-        session = GameSession.objects.create(
-            session_id = session_id,
-            current_phase = 'SETUP'
-        )
-        serializer = GameSessionSerializer(session)
-        return Response(
-            {
-                'session_id': str(session.session_id),
-                'status': 'created'
-            },
-            status=status.HTTP_201_CREATED
-        )
+
+        try:
+            # Create PostgreSQL session
+            session = GameSession.objects.create(
+                session_id=session_id,
+                current_phase='SETUP'
+            )
+
+            # Initialize MongoDB game state
+            game_store = GameStateStore()
+            game_state = game_store.get_or_create_game_state(str(session.session_id))
+            logger.info(f"MongoDB game state initialized: {game_state}")
+
+            serializer = GameSessionSerializer(session)
+            return Response(
+                {
+                    'session_id': str(session.session_id),
+                    'status': 'created'
+                },
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            logger.error(f"Error creating game: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
     @action(detail=True, methods=['POST'])
     def start_game(self, request, pk=None):
-        session = GameSession.objects.get(pk=pk)
-        logger.info(f"session is {session}")
+        try:
+            session = GameSession.objects.get(pk=pk)
+            logger.info(f"session is {session}")
 
-        # Create test players if none exist (for testing purposes)
-        if not GamePlayer.objects.filter(game_session=session).exists():
-            # Create 12 players as defined in your WerewolfGame class
-            for i in range(12):
-                GamePlayer.objects.create(
+            # Initialize MongoDB game state
+            game_store = GameStateStore()
+            game_state = game_store.get_or_create_game_state(str(session.session_id))
+            logger.info(f"MongoDB game state initialized: {game_state}")
+
+            # Create test players if none exist
+            if not GamePlayer.objects.filter(game_session=session).exists():
+                # Create 12 players as defined in your WerewolfGame class
+                for i in range(12):
+                    GamePlayer.objects.create(
+                        game_session=session,
+                        player_id=f"p{i}",
+                        name=f"Player {i}",
+                        status='ALIVE',
+                    )
+
+            # Update the game phase
+            game = WerewolfGame()
+            game.setup_game()
+
+            # Update the database with the roles assigned by the game engine
+            players_data = []
+            for player_id, game_player in game._players.items():
+                db_player = GamePlayer.objects.get(
                     game_session=session,
-                    player_id=f"p{i}",  # Match the IDs from your game engine
-                    name=f"Player {i}",
-                    status='ALIVE',
+                    player_id=player_id
                 )
+                db_player.role = game_player.get_role().value
+                db_player.status = 'ALIVE'
+                db_player.save()
+                players_data.append({
+                    'player_id': db_player.player_id,
+                    'name': db_player.name,
+                    'role': db_player.role,
+                    'status': db_player.status
+                })
 
-        # Update the game phase
-        game = WerewolfGame()
-        game.setup_game()
+            session.current_phase = game._current_phase.name
+            session.save()
 
-        # Update the database with the roles assigned by the game engine
-        players_data = []
-        for player_id, game_player in game._players.items():
-            db_player = GamePlayer.objects.get(
-                game_session = session,
-                player_id = player_id
+            # Create response
+            response = StartGameResponseDto(
+                type="game_state",
+                phase=session.current_phase,
+                players=players_data
             )
-            db_player.role = game_player.get_role().value  # Get the role value from enum
-            db_player.status = 'ALIVE'
-            db_player.save()
-            players_data.append({
-                'player_id': db_player.player_id,
-                'name': db_player.name,
-                'role': db_player.role,
-                'status': db_player.status
-            })
-        session.current_phase = game._current_phase.name  # Example phase change
-        session.save()
 
-        # Create and return response using StartGameResponseDto
-        response = StartGameResponseDto(
-            type="game_state",
-            phase=session.current_phase,
-            players=players_data
-        )
+            channel_layer = get_channel_layer()
+            logger.info(f"channel layer is {channel_layer}")
 
-        # Notify clients via WebSocket
-        channel_layer = get_channel_layer()
-        logger.info(f"channel layer is {channel_layer}")
+            return Response(response.to_json())
 
-        return Response(
-            response.to_json()
-        )
+        except GameSession.DoesNotExist:
+            return Response(
+                {'error': 'Game session not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error starting game: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['POST'])
     def submit_action(self, request, pk=None):
@@ -108,6 +138,40 @@ class GameViewSet(viewsets.ViewSet):
         sessions = GameSession.objects.all()
         serializer = GameSessionSerializer(sessions, many=True)
         return Response(serializer.data)
+
+    def destroy(self, request, pk=None):
+        """
+        Delete a game session and its associated data
+        """
+        try:
+            session = GameSession.objects.get(pk=pk)
+
+            # Delete from MongoDB
+            game_store = GameStateStore()
+            game_store.delete_game_state(str(session.session_id))
+
+            # Delete associated players
+            GamePlayer.objects.filter(game_session=session).delete()
+
+            # Delete the session itself
+            session.delete()
+
+            return Response(
+                {'message': 'Game session deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+        except GameSession.DoesNotExist:
+            return Response(
+                {'error': 'Game session not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error deleting game session: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
     # TODO: fetch all available rooms, player
     @action(detail=False, methods=['GET'])

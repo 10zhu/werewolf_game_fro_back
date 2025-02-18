@@ -18,13 +18,23 @@ class GameController:
         return True, f"Logged in as {player.name}"
 
     def submit_action(self, action_type: str, target_id: Optional[str] = None) -> Tuple[bool, str]:
-        if not self.current_player_id:
-            return False, "Not logged in"
+        try:
+            if not self.current_player_id:
+                return False, "Not logged in"
 
-        player = self.game.get_player(self.current_player_id)
-        if not player.is_alive():
-            return False, "Dead players cannot perform actions"
+            player = self.game.get_player(self.current_player_id)
+            if not player.is_alive():
+                return False, "Dead players cannot perform actions"
 
-        action = GameAction(self.current_player_id, action_type, target_id)
-        self.action_queue.append(action)
-        return True, "Action submitted successfully"
+            action = GameAction(
+                player_id=self.current_player_id,
+                action_type=action_type,
+                target_id=target_id,
+                round_number=getattr(self.game, 'current_round', 1),  # Use getattr to avoid AttributeError
+                phase=self.game._current_phase.name if hasattr(self.game, '_current_phase') else GamePhase.SETUP.name,
+                success=True  # Set initial success status
+            )
+            self.action_queue.append(action)
+            return True, "Action submitted successfully"
+        except Exception as e:
+            return False, str(e)

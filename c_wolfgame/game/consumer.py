@@ -129,15 +129,106 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 'message': 'Game session not found'
             }
 
-    @database_sync_to_async
-    def handle_player_action(self, content):
+
+    #  @database_sync_to_async
+    # def handle_player_action(self, content):
+    #     try:
+    #         player_id = content.get('player_id')
+    #         action_type = content.get('action')
+    #         target_id = content.get('target_id')
+    #
+    #         logger.info(f"Handling action: Player {player_id} performing {action_type} on {target_id}")
+    #         # First, login the player through controller
+    #         success, message = self.controller.login_player(player_id)
+    #         if not success:
+    #             return {
+    #                 'type': 'error',
+    #                 'message': message
+    #             }
+    #         # Log the action being added to MongoDB
+    #         log_action = self.game_store.add_action(
+    #             session_id=self.game_id,
+    #             player_id=player_id,
+    #             action_type=action_type,
+    #             target_id=target_id,
+    #             round_number=self.game.current_round,
+    #             phase=self.game.current_phase
+    #         )
+    #         logger.info(f"Action saved to MongoDB: {log_action}")
+    #         # Submit the action through controller
+    #         success, message = self.controller.submit_action(action_type, target_id)
+    #         if not success:
+    #             return {
+    #                 'type': 'error',
+    #                 'message': message
+    #             }
+    #         logger.info(f"Action queue before processing: {self.controller.action_queue}")
+    #         # Process the action queue
+    #         phase_changed = self.process_action_queue()
+    #         logger.info(f"Phase changed: {phase_changed}")
+    #         # Get current game state directly (not using await)
+    #         game_session = GameSession.objects.get(session_id=self.game_id)
+    #
+    #         # If phase changed, we might want to update round count or do other phase-specific logic
+    #         if phase_changed:
+    #             if game_session.current_phase == 'DAY':
+    #                 game_session.round_count += 1
+    #             game_session.save()
+    #             logger.info(f"Phase changed to: {game_session.current_phase}, Round: {game_session.round_count}")
+    #
+    #         session = GameSession.objects.get(session_id=self.game_id)
+    #         players = GamePlayer.objects.filter(game_session=game_session)
+    #         logger.info(f"Current game state - Phase: {session.current_phase}")
+    #
+    #         for player in players:
+    #             logger.info(f"Player {player.player_id}: Role={player.role}, Status={player.status}")
+    #
+    #         return {
+    #             'type': 'game_state',
+    #             'phase': game_session.current_phase,
+    #             'players': [
+    #                 {
+    #                     'player_id': player.player_id,
+    #                     'name': f"Player {int(player.player_id.replace('p', '')) + 1}",
+    #                     'role': player.role,
+    #                     'status': player.status,
+    #                     'is_policeman': player.is_policeman,
+    #                     'position': int(player.player_id.replace('p', '')) + 1
+    #                 } for player in players
+    #             ],
+    #             'round': game_session.round_count
+    #         }
+    #
+    #     except Exception as e:
+    #         logger.error(f"Error handling player action: {e}")
+    #         return {
+    #             'type': 'error',
+    #             'message': str(e)
+    #         }
+
+    async def handle_player_action(self, content):
         try:
             player_id = content.get('player_id')
             action_type = content.get('action')
             target_id = content.get('target_id')
 
             logger.info(f"Handling action: Player {player_id} performing {action_type} on {target_id}")
-            # First, login the player through controller
+
+            # 1. Get current session and validate it exists
+            session = GameSession.objects.get(session_id=self.game_id)
+
+            # 2. Log action to MongoDB with session data
+            log_action = self.game_store.add_action(
+                session_id=self.game_id,
+                player_id=player_id,
+                action_type=action_type,
+                target_id=target_id,
+                round_number=session.round_count,  # Use session data instead of game object
+                phase=session.current_phase  # Use session data instead of game object
+            )
+            logger.info(f"Action saved to MongoDB: {log_action}")
+
+            # 3. Login player and submit action to controller
             success, message = self.controller.login_player(player_id)
             if not success:
                 return {
@@ -145,37 +236,29 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                     'message': message
                 }
 
-            # Submit the action through controller
             success, message = self.controller.submit_action(action_type, target_id)
             if not success:
                 return {
                     'type': 'error',
                     'message': message
                 }
-            logger.info(f"Action queue before processing: {self.controller.action_queue}")
-            # Process the action queue
-            phase_changed = self.process_action_queue()
+
+            # 4. Process the action queue
+            phase_changed = await self.process_action_queue()
             logger.info(f"Phase changed: {phase_changed}")
-            # Get current game state directly (not using await)
-            game_session = GameSession.objects.get(session_id=self.game_id)
 
-            # If phase changed, we might want to update round count or do other phase-specific logic
+            # 5. Update game state if phase changed
             if phase_changed:
-                if game_session.current_phase == 'DAY':
-                    game_session.round_count += 1
-                game_session.save()
-                logger.info(f"Phase changed to: {game_session.current_phase}, Round: {game_session.round_count}")
+                if session.current_phase == 'DAY':
+                    session.round_count += 1
+                session.save()
+                logger.info(f"Updated to phase: {session.current_phase}, Round: {session.round_count}")
 
-            session = GameSession.objects.get(session_id=self.game_id)
-            players = GamePlayer.objects.filter(game_session=game_session)
-            logger.info(f"Current game state - Phase: {session.current_phase}")
-
-            for player in players:
-                logger.info(f"Player {player.player_id}: Role={player.role}, Status={player.status}")
-
+            # 6. Return updated game state
+            players = GamePlayer.objects.filter(game_session=session)
             return {
                 'type': 'game_state',
-                'phase': game_session.current_phase,
+                'phase': session.current_phase,
                 'players': [
                     {
                         'player_id': player.player_id,
@@ -186,7 +269,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                         'position': int(player.player_id.replace('p', '')) + 1
                     } for player in players
                 ],
-                'round': game_session.round_count
+                'round': session.round_count
             }
 
         except Exception as e:
@@ -195,6 +278,8 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 'type': 'error',
                 'message': str(e)
             }
+
+
     async def game_message(self, event):
         logger.info(f"websocket sending game message {event}")
         await self.send_json(event['message'])
@@ -203,26 +288,13 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
 
     async def process_action_queue(self):
         """Process all actions in the controller's queue"""
-
+        logger.info(f"Processing action queue")
 
         try:
             session = GameSession.objects.get(session_id=self.game_id)
             current_phase = session.current_phase
             night_actions = []
             phase_changed = False
-            # while self.controller.action_queue:
-            #     action = self.controller.action_queue.pop(0)
-            #
-            #     # Handle night phase actions
-            #     if current_phase == 'NIGHT':
-            #         if action.action_type in ['kill', 'heal', 'check', 'poison', 'sleep']:
-            #             night_actions.append(action)
-            #             if self.all_night_actions_received(night_actions):
-            #                 self.process_night_actions(night_actions)
-            #                 session.current_phase = 'POLICEMAN_SELECTION' if session.round_count == 1 else 'DAY'
-            #                 session.save()
-            #                 phase_changed = True
-
             # Process each action in the queue
             while self.controller.action_queue:
                 action = self.controller.action_queue.pop(0)
@@ -234,15 +306,22 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                         night_actions.append(action)
                         logger.info(f"Added night action from {action.player_id}. Total actions: {len(night_actions)}")
                         logger.info(f"Current night actions: {[a.action_type for a in night_actions]}")
-                        # Check if we have a kill action
-                        # werewolf_actions = [a for a in night_actions if a.action_type == 'kill']
-                        # if werewolf_actions:
-                        logger.info("Kill action received, processing night actions...")
-                        self.process_night_actions(night_actions)
-                        session.current_phase = 'POLICEMAN_SELECTION' if session.round_count == 1 else 'DAY'
-                        session.save()
-                        phase_changed = True
-                        logger.info(f"Phase changed to {session.current_phase}")
+
+                        if self.all_night_actions_received(night_actions):
+                            logger.info("All night actions received, processing night actions...")
+                            self.process_night_actions(night_actions)
+                            session.current_phase = 'POLICEMAN_SELECTION' if session.round_count == 1 else 'DAY'
+                            session.save()
+                            phase_changed = True
+                            logger.info(f"Phase changed to {session.current_phase}")
+                            # # Send updated game state to all clients
+                            await self.channel_layer.group_send(
+                                self.room_group_name,
+                                {
+                                    'type': 'game_message',
+                                    'message': await self.get_game_state()
+                                }
+                            )
 
 
                 # Handle policeman selection phase
@@ -392,48 +471,37 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
 
         except Exception as e:
             logger.error(f"Error handling policeman transfer: {e}")
+
     def all_night_actions_received(self, night_actions):
         """Check if we have received all expected night actions"""
-        werewolf_actions = sum(1 for action in night_actions if action.action_type == 'kill')
-        seer_actions = sum(1 for action in night_actions if action.action_type == 'check')
-        witch_actions = sum(1 for action in night_actions if action.action_type in ['heal', 'poison'])
+        try:
+            # Get current session and alive players
+            session = GameSession.objects.get(session_id=self.game_id)
+            alive_players = GamePlayer.objects.filter(
+                game_session=session,
+                status='ALIVE'
+            )
 
-        # Check living players with each role in the game engine
-        werewolves_alive = any(
-            player.get_role() and
-            player.get_role().value == 'WEREWOLF' and
-            player.is_alive()
-            for player in self.game._players.values()
-        )
+            # Use the MongoDB function to check pending actions
+            pending_count = self.game_store.get_pending_actions_count(
+                str(session.session_id),
+                session.round_count,
+                'NIGHT',
+                alive_players.count()
+            )
 
-        seer_alive = any(
-            player.get_role() and
-            player.get_role().value == 'SEER' and
-            player.is_alive()
-            for player in self.game._players.values()
-        )
+            logger.info(
+                f"Checking night actions - Alive players: {alive_players.count()}, Pending actions: {pending_count}")
 
-        witch_alive = any(
-            player.get_role() and
-            player.get_role().value == 'WITCH' and
-            player.is_alive()
-            for player in self.game._players.values()
-        )
-        # For villagers/other roles, their 'sleep' action doesn't affect night completion
-        villager_sleep_actions = sum(1 for action in night_actions if action.action_type == 'sleep')
+            # All actions received when pending count is 0
+            all_received = pending_count == 0
+            logger.info(f"All night actions received: {all_received}")
 
-        # Expected actions based on living players
-        expected_werewolf_actions = 1 if werewolves_alive else 0
-        expected_seer_actions = 1 if seer_alive else 0
-        expected_witch_actions = 1 if witch_alive else 0
-        logger.info(f"Night actions received - Werewolf: {werewolf_actions}/{expected_werewolf_actions}, "
-                    f"Seer: {seer_actions}/{expected_seer_actions}, "
-                    f"Witch: {witch_actions}/{expected_witch_actions}, "
-                    f"Villager sleep: {villager_sleep_actions}")
-        return (werewolf_actions >= expected_werewolf_actions and
-                seer_actions >= expected_seer_actions and
-                witch_actions >= expected_witch_actions)
+            return all_received
 
+        except Exception as e:
+            logger.error(f"Error checking night actions: {e}")
+            return False
     def process_night_actions(self, night_actions):
         """Process all night actions in the correct order"""
         try:
@@ -471,9 +539,11 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 self.update_player_status(poisoned_player_id, 'DEAD')
 
             # Update game phase after processing all actions
-            session.current_phase = 'POLICEMAN_SELECTION' if session.round_count == 1 else 'DAY'
+            new_phase = 'POLICEMAN_SELECTION' if session.round_count == 1 else 'DAY'
+            session.current_phase = new_phase
             session.save()
-            logger.info(f"Changed phase to: {session.current_phase}, round: {session.round_count}")
+
+            logger.info(f"Changed phase from NIGHT to: {new_phase}, round: {session.round_count}")
             return True
 
         except Exception as e:
@@ -569,3 +639,88 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 'message': 'Game session not found'
             }
 
+    @database_sync_to_async
+    def handle_player_action(self, content):
+        try:
+            player_id = content.get('player_id')
+            action_type = content.get('action')
+            target_id = content.get('target_id')
+
+            logger.info(f"Handling action: Player {player_id} performing {action_type} on {target_id}")
+
+            # Get current session and alive players
+            session = GameSession.objects.get(session_id=self.game_id)
+            alive_players = GamePlayer.objects.filter(
+                game_session=session,
+                status='ALIVE'
+            )
+
+            # Log alive players
+            logger.info("Current alive players:")
+            for player in alive_players:
+                logger.info(f"  Player {player.player_id} (Role: {player.role})")
+
+            # Log action to MongoDB
+            log_action = self.game_store.add_action(
+                session_id=self.game_id,
+                player_id=player_id,
+                action_type=action_type,
+                target_id=target_id,
+                round_number=session.round_count,
+                phase=session.current_phase
+            )
+            logger.info(f"Action saved to MongoDB: {log_action}")
+
+            # Process action through controller
+            success, message = self.controller.login_player(player_id)
+            if not success:
+                return {'type': 'error', 'message': message}
+
+            success, message = self.controller.submit_action(action_type, target_id)
+            if not success:
+                return {'type': 'error', 'message': message}
+
+            # Check pending actions after this action
+            pending_actions = self.game_store.get_pending_actions_count(
+                self.game_id,
+                session.round_count,
+                session.current_phase,
+                len(alive_players)
+            )
+            logger.info(f"Pending actions after {player_id}'s action: {pending_actions}")
+
+            # Process the action queue
+            phase_changed = self.process_action_queue()
+            logger.info(f"Phase changed: {phase_changed}")
+
+            # Update game state if phase changed
+            if phase_changed:
+                if session.current_phase == 'DAY':
+                    session.round_count += 1
+                session.save()
+                logger.info(f"Updated to phase: {session.current_phase}, Round: {session.round_count}")
+
+            # Return updated game state
+            players = GamePlayer.objects.filter(game_session=session)
+            return {
+                'type': 'game_state',
+                'phase': session.current_phase,
+                'players': [
+                    {
+                        'player_id': player.player_id,
+                        'name': f"Player {int(player.player_id.replace('p', '')) + 1}",
+                        'role': player.role,
+                        'status': player.status,
+                        'is_policeman': player.is_policeman,
+                        'position': int(player.player_id.replace('p', '')) + 1
+                    } for player in players
+                ],
+                'round': session.round_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error handling player action: {e}")
+            return {
+                'type': 'error',
+                'message': str(e)
+            }

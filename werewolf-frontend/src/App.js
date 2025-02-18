@@ -14,7 +14,6 @@ const App = () => {
   const [socket, setSocket] = useState(null);
   const [showRoomList, setShowRoomList] = useState(true);
 
-
   useEffect(() => {
     if (gameSession) {
       const ws = new WebSocket(`ws://localhost:8000/ws/game/${gameSession}/`);
@@ -28,9 +27,11 @@ const App = () => {
             console.log("Game state update:", data);
             setGamePhase(data.phase);
             setPlayers(data.players || []);
+            console.log("Game phase updated to:", data.phase);
             break;
 
           case 'phase_update':
+           console.log("Phase update received:", data.phase);
             setGamePhase(data.phase);
             break;
 
@@ -42,6 +43,10 @@ const App = () => {
             console.log('Unknown message type:', data.type);
         }
       };
+
+      ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
 
       setSocket(ws);
 
@@ -123,26 +128,47 @@ const handleSelectRoom = (sessionId) => {
 //      }
 //    };
 
-  const submitAction = async (action, targetId) => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
+
+//  const submitAction = async (action, targetId) => {
+//    if (socket && socket.readyState === WebSocket.OPEN) {
+//      socket.send(JSON.stringify({
+//        type: 'player_action',
+//        player_id: currentPlayer,
+//        action,
+//        target_id: targetId
+//      }));
+//    } else {
+//      console.error('WebSocket is not connected');
+//    }
+//  };
+//
+//  // Add this to help with debugging
+//  console.log("Current state:", {
+//    gamePhase,
+//    currentPlayer,
+//    playersCount: players.length,
+//    players
+//  });
+    const submitAction = async (action, targetId) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket is not connected, attempting to reconnect...');
+      setSocket(null);  // This will trigger a reconnection
+      return;
+    }
+
+    try {
       socket.send(JSON.stringify({
         type: 'player_action',
         player_id: currentPlayer,
         action,
         target_id: targetId
       }));
-    } else {
-      console.error('WebSocket is not connected');
+      console.log('Action submitted:', { action, targetId });
+    } catch (error) {
+      console.error('Error submitting action:', error);
     }
   };
 
-  // Add this to help with debugging
-  console.log("Current state:", {
-    gamePhase,
-    currentPlayer,
-    playersCount: players.length,
-    players
-  });
 
   return (
     <div className="min-h-screen bg-gray-100 p-8">

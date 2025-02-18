@@ -167,11 +167,13 @@ class GameStateStore:
         if power_type not in ['heal', 'poison']:
             return False
 
+        # Use proper MongoDB update syntax
+        key = f'witch_powers_used.{power_type}'
         result = self.game_states.update_one(
             {'session_id': str(session_id)},
             {
                 '$set': {
-                    f'witch_powers_used.{power_type}': used,
+                    key: used,
                     'updated_at': datetime.utcnow()
                 }
             }
@@ -227,7 +229,8 @@ class GameStateStore:
         try:
             game_state = self.game_states.find_one({'session_id': session_id})
             if not game_state:
-                return alive_players_count  # If no game state found, all players are pending
+                logger.info(f"No game state found for session {session_id}")
+                return alive_players_count
 
             # Get actions for current round and phase
             actions = []
@@ -238,10 +241,48 @@ class GameStateStore:
                        and action.get('phase') == phase
                 ]
 
+            # Get the players who have acted
+            acted_players = set(action['player_id'] for action in actions)
+
+            # Add detailed logging
+            logger.info(f"""
+            ====== Action Status ======
+            Round: {round_number}
+            Phase: {phase}
+            Total Alive Players: {alive_players_count}
+
+            Actions this round:
+            {[{
+                'player': action['player_id'],
+                'action': action['action_type'],
+                'target': action['target_id'],
+                'timestamp': action['timestamp']
+            } for action in actions]}
+
+            Players who have acted: {sorted(list(acted_players))}
+            Total actions received: {len(actions)}
+            Unique actors: {len(acted_players)}
+            =========================""")
+
             # Count unique players who have acted
-            unique_actors = len(set(action['player_id'] for action in actions))
-            return alive_players_count - unique_actors
+            unique_actors = len(acted_players)
+            pending = alive_players_count - unique_actors
+
+            logger.info(
+                f"Final calculation: {alive_players_count} alive players - {unique_actors} actors = {pending} pending")
+
+            return pending
 
         except Exception as e:
             logger.error(f"Error getting pending actions count: {e}")
             return 0
+
+    def delete_game_state(self, session_id: str) -> bool:
+        """Delete a game state document"""
+        try:
+            result = self.game_states.delete_one({'session_id': str(session_id)})
+            return result.deleted_count > 0
+        except Exception as e:
+            logger.error(f"Error deleting game state: {e}")
+            return False
+

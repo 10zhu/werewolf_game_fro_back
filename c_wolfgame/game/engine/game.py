@@ -29,6 +29,8 @@ class WerewolfGame:
         self._round_count = 1
         self._controller = GameController(self)
         self._witch_powers = {'heal': True, 'poison': True}
+        self.current_round = 1
+        self._game_over = False
 
         for i in range(12):
             player_id = f"p{i}"
@@ -50,5 +52,5 @@ class WerewolfGame:
         random.shuffle(roles)
         for player, role in zip(self._players.values(), roles):
             player.assign_role(role)
-
+        self.current_round = 1  # Make sure it's set during setup
         self._current_phase = GamePhase.NIGHT

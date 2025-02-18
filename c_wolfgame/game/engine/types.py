@@ -28,4 +28,6 @@ class GameAction:
     player_id: str
     action_type: str
     target_id: Optional[str] = None
+    round_number: Optional[int] = None
+    phase: Optional[str] = None
     success: bool = False

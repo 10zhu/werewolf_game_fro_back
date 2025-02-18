@@ -104,10 +104,10 @@ DATABASES = {
     }
 }
 
-MONGODB_URI = (
-    "mongodb://root:password@localhost:27017/wolf_game_mongo_db?authSource=admin"
-)
-
+# MONGODB_URI = (
+#     "mongodb://root:password@localhost:27017/wolf_game_mongo_db?authSource=admin"
+# )
+MONGODB_URI = 'mongodb://wolfgameuser:wolfgamepassword@localhost:27017/wolf_game_mongo_db'
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators

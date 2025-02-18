@@ -6,24 +6,45 @@ export const RoomList = ({ onSelectRoom }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchRooms = async () => {
-      try {
-        const response = await fetch('http://localhost:8000/api/games/available_rooms/');
-        const data = await response.json();
-        setRooms(data.rooms);
-        setLoading(false);
-      } catch (err) {
-        setError('Failed to fetch available rooms');
-        setLoading(false);
-      }
-    };
+  const fetchRooms = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/games/available_rooms/');
+      const data = await response.json();
+      setRooms(data.rooms);
+      setLoading(false);
+    } catch (err) {
+      setError('Failed to fetch available rooms');
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchRooms();
     // Poll for room updates every 5 seconds
     const interval = setInterval(fetchRooms, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleDeleteRoom = async (sessionId, e) => {
+    e.stopPropagation(); // Prevent room selection when clicking delete
+    if (window.confirm('Are you sure you want to delete this room?')) {
+      try {
+        const response = await fetch(`http://localhost:8000/api/games/${sessionId}/`, {
+          method: 'DELETE',
+        });
+
+        if (response.ok) {
+          // Remove the room from the local state
+          setRooms(rooms.filter(room => room.session_id !== sessionId));
+        } else {
+          const data = await response.json();
+          setError(data.error || 'Failed to delete room');
+        }
+      } catch (err) {
+        setError('Failed to delete room');
+      }
+    }
+  };
 
   if (loading) {
     return (
@@ -52,18 +73,27 @@ export const RoomList = ({ onSelectRoom }) => {
           {rooms.map((room) => (
             <div
               key={room.session_id}
-              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer relative"
               onClick={() => onSelectRoom(room.session_id)}
             >
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-lg font-semibold">Room {room.session_id.slice(0, 8)}...</h3>
-                <span className={`px-3 py-1 rounded-full text-sm ${
-                  room.waiting_for_actions
-                    ? 'bg-yellow-100 text-yellow-800'
-                    : 'bg-green-100 text-green-800'
-                }`}>
-                  {room.waiting_for_actions ? 'Waiting for actions' : 'Ready for next phase'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-sm ${
+                    room.waiting_for_actions
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-green-100 text-green-800'
+                  }`}>
+                    {room.waiting_for_actions ? 'Waiting for actions' : 'Ready for next phase'}
+                  </span>
+                  <button
+                    onClick={(e) => handleDeleteRoom(room.session_id, e)}
+                    className="px-3 py-1 text-white bg-red-500 hover:bg-red-600 rounded transition-colors"
+                    title="Delete room"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">

@@ -1,12 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+
 export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlayer }) => {
   const [selectedAction, setSelectedAction] = useState('');
   const [targetPlayer, setTargetPlayer] = useState('');
 
+  // Add debug logging
+  useEffect(() => {
+    console.log('PlayerActions - Current phase:', gamePhase);
+    console.log('PlayerActions - Current player:', currentPlayer);
+    console.log('PlayerActions - Available players:', players);
+  }, [gamePhase, currentPlayer, players]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (selectedAction) {
-      // For run_for_policeman, automatically set target as current player
+      // Log action submission
+      console.log('Submitting action:', {
+        action: selectedAction,
+        target: targetPlayer,
+        phase: gamePhase
+      });
+
       const target = selectedAction === 'run_for_policeman' ? currentPlayer : targetPlayer;
       onSubmitAction(selectedAction, target);
       setSelectedAction('');
@@ -21,13 +35,18 @@ export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlaye
   };
 
   const getAvailableActions = () => {
+    console.log('Getting available actions for phase:', gamePhase);
+
     if (gamePhase === 'POLICEMAN_SELECTION') {
-      // Check if current player is already a candidate
       const isCandidate = players.find(p => p.player_id === currentPlayer)?.running_for_policeman;
+      console.log('Is current player a candidate?', isCandidate);
+
       if (isCandidate) {
         return []; // Candidates cannot vote
       }
       const candidates = players.filter(p => p.running_for_policeman);
+      console.log('Current candidates:', candidates);
+
       if (candidates.length > 0) {
         return ['vote_policeman'];
       }
@@ -42,22 +61,22 @@ export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlaye
 
       {gamePhase === 'POLICEMAN_SELECTION' && (
         <div className="mb-6 bg-gray-50 p-4 rounded-lg">
-          <h3 className="text-lg font-semibold mb-3">Policeman Candidates:</h3>
+          <h3 className="text-lg font-semibold mb-3">Policeman Selection:</h3>
           {players.some(p => p.running_for_policeman) ? (
             <div className="space-y-3">
+              <p className="font-medium">Current Candidates:</p>
               {players
                 .filter(p => p.running_for_policeman)
                 .map(candidate => (
                   <div key={candidate.player_id}
                        className="p-3 bg-white rounded-lg shadow-sm border border-gray-200">
                     <p className="font-medium">Player {candidate.position}</p>
-                    <p className="text-sm text-gray-600">Click vote action to support this candidate</p>
                   </div>
                 ))}
             </div>
           ) : (
             <p className="text-gray-600 italic">
-              No candidates yet. Choose 'run_for_policeman' if you want to be a candidate.
+              Would you like to run for policeman?
             </p>
           )}
         </div>
@@ -80,7 +99,7 @@ export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlaye
           </select>
         </div>
 
-        {selectedAction && (
+        {selectedAction && selectedAction !== 'run_for_policeman' && (
           <div>
             <label className="block mb-2">Target:</label>
             <select
@@ -94,14 +113,11 @@ export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlaye
                   if (selectedAction === 'vote_policeman') {
                     return player.running_for_policeman;
                   }
-                  if (selectedAction === 'run_for_policeman') {
-                    return player.player_id === currentPlayer;
-                  }
-                  return true;
+                  return player.status === 'ALIVE';
                 })
                 .map((player) => (
                   <option key={player.player_id} value={player.player_id}>
-                     Player {parseInt(player.player_id.replace('p', '')) + 1}
+                    Player {player.position}
                   </option>
                 ))}
             </select>
@@ -111,7 +127,7 @@ export const PlayerActions = ({ gamePhase, onSubmitAction, players, currentPlaye
         <button
           type="submit"
           className="bg-blue-500 text-white px-4 py-2 rounded w-full"
-          disabled={!selectedAction || !targetPlayer}
+          disabled={!selectedAction || (!targetPlayer && selectedAction !== 'run_for_policeman')}
         >
           Submit Action
         </button>

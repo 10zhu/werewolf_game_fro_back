@@ -233,13 +233,11 @@ class GameStateStore:
                 return alive_players_count
 
             # Get actions for current round and phase
-            actions = []
-            if 'action_history' in game_state:
-                actions = [
-                    action for action in game_state['action_history']
-                    if action.get('round_number') == round_number
-                       and action.get('phase') == phase
-                ]
+            actions = [
+                action for action in game_state.get('action_history', [])
+                if action.get('round_number') == round_number
+                   and action.get('phase') == phase
+            ]
 
             # Get the players who have acted
             acted_players = set(action['player_id'] for action in actions)

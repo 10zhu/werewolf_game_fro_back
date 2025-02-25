@@ -187,11 +187,11 @@ class TestBot:
         """Get the most recently created game session"""
         try:
             # Use the list endpoint to get all games
-            response = requests.get(f"{self.API_BASE}games/")
+            response = requests.get(f"{self.API_BASE}games/?recent=true")
             if response.ok:
                 games = response.json()
                 if games:
-                    # Get the latest game (assuming games are ordered by creation time)
+                    # First game should be the most recent
                     latest_game = games[-1]
                     game_id = latest_game['session_id']
                     self.logger.info(f"Found existing game: {game_id}")
@@ -218,6 +218,7 @@ class TestBot:
             raise
 
     async def run_bot(self, game_id: str, bot: BotStrategy):
+        game_store = GameStateStore()
         while True:  # Keep trying to reconnect
             try:
                 ws_url = f"{self.WS_BASE}{game_id}/"
@@ -235,6 +236,18 @@ class TestBot:
                             action = await bot.decide_action(game_state, game_id)
                             self.logger.info(f"current action:{action}")
                             if action:
+                                # Explicitly record the action in MongoDB
+                                recorded = game_store.add_action(
+                                    session_id=game_id,
+                                    player_id=action['player_id'],
+                                    action_type=action['action'],
+                                    target_id=action.get('target_id'),
+                                    round_number=game_state.get('round', 1),
+                                    phase=game_state.get('phase')
+                                )
+
+                                # Log whether the action was successfully recorded
+                                self.logger.info(f"Action recorded in MongoDB: {recorded}")
                                 await ws.send(json.dumps(action))
                                 self.logger.info(f"Bot {bot.player_id} sent action: {action}")
                                 await asyncio.sleep(1)  # Add delay between actions
@@ -252,6 +265,7 @@ class TestBot:
         try:
             game_state = await self.get_game_state(game_id)
             self.logger.info(f"Initial game state: {game_state}")
+            self.logger.info(f"game id: {game_id}")
 
             # Create tasks for all bots
             bots = []
@@ -272,8 +286,14 @@ class TestBot:
                 # Check MongoDB for current game state and pending actions
                 game_store = GameStateStore()
                 current_state = game_store.get_game_state(game_id)
+
+                if not current_state:
+                    self.logger.error("Could not get current game state")
+                    break
+
                 current_round = game_state.get('round', 1)
                 current_phase = game_state.get('phase')
+                self.logger.info(f"Current round: {current_round}, phase: {current_phase}")
 
                 actions = current_state.get('action_history', [])
                 current_actions = [
@@ -282,15 +302,13 @@ class TestBot:
                        action.get('phase') == current_phase
                 ]
 
-                self.logger.info(f"Current round: {current_round}")
-                self.logger.info(f"Current phase: {current_phase}")
                 self.logger.info(f"Actions this round: {current_actions}")
 
                 alive_players = [p for p in game_state['players'] if p['status'] == 'ALIVE']
                 pending_actions = game_store.get_pending_actions_count(
                     game_id,
-                    game_state.get('round', 1),
-                    game_state.get('phase'),
+                    current_round,
+                    current_phase,
                     len(alive_players)
                 )
 
@@ -302,6 +320,7 @@ class TestBot:
                             if action:
                                 await self.send_action(game_id, action)
                                 self.logger.info(f"Bot {bot.player_id} sent action: {action}")
+
 
                     # Wait for server to process actions
                     await asyncio.sleep(2)

@@ -7,14 +7,36 @@ For more information on this file, see
 https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 """
 
-from channels.routing import ProtocolTypeRouter, URLRouter
+# from channels.routing import ProtocolTypeRouter, URLRouter
+# from django.core.asgi import get_asgi_application
+# from game.routing import websocket_urlpatterns
+#
+# application = ProtocolTypeRouter({
+#     'http': get_asgi_application(),
+#     'websocket': URLRouter(websocket_urlpatterns),
+# })
+
+import os
 from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
 from game.routing import websocket_urlpatterns
 
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'wolfgame.settings')
+
+django_asgi_app = get_asgi_application()
+
 application = ProtocolTypeRouter({
-    'http': get_asgi_application(),
-    'websocket': URLRouter(websocket_urlpatterns),
+    "http": django_asgi_app,
+    "websocket": AuthMiddlewareStack(
+        URLRouter(websocket_urlpatterns)
+    ),
 })
+
+
+
+
+
 
 # import os
 #

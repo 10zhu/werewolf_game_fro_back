@@ -19,6 +19,12 @@ from .start_game_dto_response import StartGameResponseDto
 logger = logging.getLogger(__name__)
 
 class GameViewSet(viewsets.ViewSet):
+    def get(self, request):
+        # Order games by creation time in descending order
+        games = GameSession.objects.order_by('-created_at')
+        serializer = GameSessionSerializer(games, many=True)
+        return Response(serializer.data)
+
     def create(self, request):  # Add this method to handle POST
         print("Incoming data:", request.data)
         session_id = request.data.get('session_id')

@@ -63,6 +63,14 @@ class NightPhaseHandler:
 
             # Phase change logic
             if all_players_acted:
+                self.logger.info(f"""
+                Phase Change Decision Details:
+                - All players acted: {all_players_acted}
+                - Current Phase: {session.current_phase}
+                - Round Count: {session.round_count}
+                - Will phase change: {all_players_acted and session.current_phase == 'NIGHT'}
+                """)
+
                 if session.current_phase == 'NIGHT':
                     if session.round_count == 1:
                         # First round night ends, move to policeman selection
@@ -105,9 +113,9 @@ class PolicemanPhaseHandler:
         self.controller = controller
         self.logger = logging.getLogger(__name__)
 
-    @database_sync_to_async
-    def handle_candidacy(self, player_id, session):
-        """Handle a player running for policeman"""
+    # Sync versions of the methods for use within process_actions
+    def handle_candidacy_sync(self, player_id, session):
+        """Handle a player running for policeman (sync version)"""
         try:
             player = GamePlayer.objects.get(
                 game_session=session,
@@ -121,9 +129,29 @@ class PolicemanPhaseHandler:
             self.logger.error(f"Error handling candidacy: {e}")
             return False
 
+    # Async versions of the methods for external calls
     @database_sync_to_async
-    def process_vote(self, voter_id, candidate_id, session):
-        """Process a vote for policeman"""
+    def handle_candidacy(self, player_id, session):
+        """Handle a player running for policeman (async wrapper)"""
+        return self.handle_candidacy_sync(player_id, session)
+    # @database_sync_to_async
+    # def handle_candidacy(self, player_id, session):
+    #     """Handle a player running for policeman"""
+    #     try:
+    #         player = GamePlayer.objects.get(
+    #             game_session=session,
+    #             player_id=player_id
+    #         )
+    #         player.running_for_policeman = True
+    #         player.save()
+    #         self.logger.info(f"Player {player_id} is now running for policeman")
+    #         return True
+    #     except Exception as e:
+    #         self.logger.error(f"Error handling candidacy: {e}")
+    #         return False
+
+    def process_vote_sync(self, voter_id, candidate_id, session):
+        """Process a vote for policeman (sync version)"""
         try:
             voter = GamePlayer.objects.get(game_session=session, player_id=voter_id)
             candidate = GamePlayer.objects.get(game_session=session, player_id=candidate_id)
@@ -133,22 +161,42 @@ class PolicemanPhaseHandler:
 
             self.controller.policeman_votes[voter_id] = candidate_id
             self.logger.info(f"Vote recorded: {voter_id} voted for {candidate_id}")
-
-            # Check if voting is complete
-            total_voters = GamePlayer.objects.filter(
-                game_session=session,
-                status='ALIVE',
-                running_for_policeman=False
-            ).count()
-
-            if len(self.controller.policeman_votes) >= total_voters:
-                self._finalize_election(session)
-                return True
-            return False
-
+            return True
         except Exception as e:
             self.logger.error(f"Error processing vote: {e}")
             return False
+    @database_sync_to_async
+    def process_vote(self, voter_id, candidate_id, session):
+        """Process a vote for policeman (async wrapper)"""
+        return self.process_vote_sync(voter_id, candidate_id, session)
+    # @database_sync_to_async
+    # def process_vote(self, voter_id, candidate_id, session):
+    #     """Process a vote for policeman"""
+    #     try:
+    #         voter = GamePlayer.objects.get(game_session=session, player_id=voter_id)
+    #         candidate = GamePlayer.objects.get(game_session=session, player_id=candidate_id)
+    #
+    #         if not candidate.running_for_policeman or voter.running_for_policeman:
+    #             return False
+    #
+    #         self.controller.policeman_votes[voter_id] = candidate_id
+    #         self.logger.info(f"Vote recorded: {voter_id} voted for {candidate_id}")
+    #
+    #         # Check if voting is complete
+    #         total_voters = GamePlayer.objects.filter(
+    #             game_session=session,
+    #             status='ALIVE',
+    #             running_for_policeman=False
+    #         ).count()
+    #
+    #         if len(self.controller.policeman_votes) >= total_voters:
+    #             self._finalize_election(session)
+    #             return True
+    #         return False
+    #
+    #     except Exception as e:
+    #         self.logger.error(f"Error processing vote: {e}")
+    #         return False
 
     def _finalize_election(self, session):
         """Count votes and declare winner"""
@@ -177,3 +225,47 @@ class PolicemanPhaseHandler:
                 self.logger.info(f"Election complete: {winner_id} is the new policeman")
         except Exception as e:
             self.logger.error(f"Error finalizing election: {e}")
+
+    @database_sync_to_async
+    def process_actions(self, content, session):
+        """Process player actions during policeman selection phase"""
+        try:
+            # Extract information from the content
+            player_id = content.get('player_id')
+            action_type = content.get('action')
+            target_id = content.get('target_id')
+
+            self.logger.info(f"Processing policeman phase action: {player_id} performing {action_type}")
+
+            # Handle different action types
+            if action_type == 'run_for_policeman':
+                success = self.handle_candidacy_sync(player_id, session)
+                self.logger.info(f"Player {player_id} running for policeman: {'success' if success else 'failed'}")
+                # Running for policeman doesn't complete the phase
+                return False
+
+            elif action_type == 'vote_policeman':
+                # Process the vote
+                success = self.process_vote_sync(player_id, target_id, session)
+
+                # Check if all votes are in and the phase should change
+                alive_players = GamePlayer.objects.filter(
+                    game_session=session,
+                    status='ALIVE',
+                    running_for_policeman=False
+                )
+
+                total_votes = len(self.controller.policeman_votes)
+                all_voted = total_votes >= alive_players.count()
+
+                self.logger.info(f"Policeman vote processed: {player_id} voted for {target_id}. All voted: {all_voted}")
+
+                if all_voted:
+                    # Finalize the election and change phase
+                    self._finalize_election(session)
+                    return True  # Phase should change
+
+            return False  # No phase change by default
+        except Exception as e:
+            self.logger.error(f"Error processing policeman phase action: {e}")
+            return False

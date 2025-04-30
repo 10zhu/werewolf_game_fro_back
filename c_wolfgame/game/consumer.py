@@ -48,9 +48,74 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 await self.handle_player_action(content)
             elif message_type == 'start_game':
                 await self.handle_start_game()
+            elif message_type == 'check_phase_completion':
+                await self.handle_phase_completion_check(content)
         except Exception as e:
             logger.error(f"Error in receive_json: {e}")
             await self.send_error(str(e))
+
+    async def handle_phase_completion_check(self, content):
+        """Handle phase completion check"""
+        try:
+            session = await database_sync_to_async(GameSession.objects.get)(session_id=self.game_id)
+            current_phase = session.current_phase
+            round_number = session.round_count
+
+            logger.info(f"Received phase completion check for {current_phase}, round {round_number}")
+
+            # Get all alive players
+            alive_players = await database_sync_to_async(lambda: GamePlayer.objects.filter(
+                game_session=session,
+                status='ALIVE'
+            ).count())()
+
+            # Get actions for current round and phase
+            actions = self.game_store.get_action_history(
+                self.game_id,
+                round_number=round_number
+            )
+            current_actions = [a for a in actions if a.get('phase') == current_phase]
+
+            # Count unique actors
+            unique_actors = set(a.get('player_id') for a in current_actions)
+
+            logger.info(f"Phase completion check: {len(unique_actors)} actors out of {alive_players} alive players")
+
+            # Check if all have acted
+            if len(unique_actors) >= alive_players:
+                logger.info(f"All players have acted, advancing phase from {current_phase}")
+
+                if current_phase == 'NIGHT':
+                    if round_number == 1:
+                        session.current_phase = 'POLICEMAN_SELECTION'
+                    else:
+                        session.current_phase = 'DAY'
+                    await database_sync_to_async(session.save)()
+                    logger.info(f"Advanced phase to {session.current_phase}")
+
+                    # Broadcast updated state
+                    game_state = await self.state_manager.get_current_state()
+                    await self.broadcast_state(game_state)
+
+                    await self.send_json({
+                        'type': 'phase_changed',
+                        'old_phase': current_phase,
+                        'new_phase': session.current_phase
+                    })
+                else:
+                    await self.send_json({
+                        'type': 'phase_unchanged',
+                        'message': f"Phase {current_phase} not eligible for automatic advancement"
+                    })
+            else:
+                await self.send_json({
+                    'type': 'phase_incomplete',
+                    'message': f"Not all players have acted yet ({len(unique_actors)} of {alive_players})"
+                })
+        except Exception as e:
+            logger.error(f"Error in phase completion check: {e}")
+            await self.send_error(str(e))
+
 
     async def handle_player_action(self, content):
         # BaseBot
@@ -74,11 +139,14 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             if current_phase == 'NIGHT':
                 phase_changed = await self.night_handler.process_actions(content, session)
             elif current_phase == 'POLICEMAN_SELECTION':
-                logger.info(f"here in policeman phase")
+                logger.info(f"Processing action in POLICEMAN_SELECTION phase: {content}")
                 if content.get('action') == 'run_for_policeman':
+
                     # Handle the 'run_for_policeman' action
                     player_id = content.get('player_id')
+                    logger.info(f" {player_id}: run_for_policeman")
                     success = await self.police_handler.handle_candidacy(player_id, session)
+                    logger.info(f"Handling candidacy result: {success}")
                     if success:
                         # Broadcast updated game state to all clients
                         game_state = await self.state_manager.get_current_state()

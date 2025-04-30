@@ -17,7 +17,7 @@ const App = () => {
   useEffect(() => {
     if (gameSession) {
       const ws = new WebSocket(`ws://localhost:8000/ws/game/${gameSession}/`);
-
+       console.log("Frontend connected to session:", gameSession);
       ws.onmessage = (event) => {
         console.log("Receiving message:", event.data);
         const data = JSON.parse(event.data);
@@ -80,6 +80,7 @@ const App = () => {
         body: JSON.stringify({ session_id: Date.now().toString() }),
       });
       const data = await response.json();
+      console.log("Frontend created game session:", data.session_id);
       setGameSession(data.session_id);
       setShowRoomList(false);
     } catch (error) {
